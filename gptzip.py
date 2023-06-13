@@ -6,97 +6,130 @@ import statistics
 from array import array
 import bz2
 import codecs
+import statistics
 
 class GPTZip:
 
     def __init__(self) -> None:
         self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
         self.model = GPT2LMHeadModel.from_pretrained("gpt2")
+        self.BLOCK_SIZE = 200
 
 
-    def get_tokens(self, text):
+    def text_to_tokens(self, text):
         tokens = self.tokenizer(text, return_tensors="pt")
         tokens = tokens["input_ids"].squeeze()
         return tokens
     
-    def get_text(self, tokens):
+    def tokens_to_text(self, tokens):
         tokens = tokens.reshape((1, -1))
         text = self.tokenizer.batch_decode(tokens)
         return text[0]
 
 
 
-    def encode_token(self, tokens, next_token):
+    def encode_token(self, cur_token, next_token, past_key_values=None):
 
 
 
         my_inputs = {}
-        my_inputs['input_ids'] = tokens.reshape((1, -1))
+        my_inputs['input_ids'] = torch.tensor([[cur_token]])
         my_inputs['attention_mask'] = torch.ones(my_inputs['input_ids'].shape)
 
 
-        outputs = self.model(**my_inputs, labels=my_inputs["input_ids"])
+        outputs = self.model(**my_inputs, labels=my_inputs["input_ids"], past_key_values=past_key_values)
         logits = outputs.logits
 
         next_token_logits = logits[0, -1:, :].squeeze()
         logits, sorted_tokens = torch.sort(next_token_logits, descending=True)
 
         score = (sorted_tokens==next_token).nonzero().item()
-        return score
+        return score, outputs.past_key_values
 
-    def decode_token(self, tokens, score):
+    def decode_token(self, cur_token, score, past_key_values=None):
         my_inputs = {}
-        my_inputs['input_ids'] = tokens.reshape((1, -1))
+        my_inputs['input_ids'] = torch.tensor([[cur_token]])
         my_inputs['attention_mask'] = torch.ones(my_inputs['input_ids'].shape)
    
-        outputs = self.model(**my_inputs, labels=my_inputs["input_ids"])
+        outputs = self.model(**my_inputs, labels=my_inputs["input_ids"], past_key_values=past_key_values)
         logits = outputs.logits
 
         next_token_logits = logits[0, -1:, :].squeeze()
         logits, sorted_tokens = torch.sort(next_token_logits, descending=True)
-        
-        return sorted_tokens[score].item()
+        decoded_token = sorted_tokens[score].item()
 
-    def encode_text(self, text, context_len=5):        
-        set_seed(42)
-        text = self.tokenizer.eos_token*context_len + text
-        tokens = self.get_tokens(text)
+        return decoded_token, outputs.past_key_values
 
+    def encode_text(self, text):        
+
+        tokens = self.text_to_tokens(text).tolist()
+        blocks = 1 + len(tokens) // self.BLOCK_SIZE
         encoded_tokens = []
-        for i in range(len(tokens)- context_len ):
-            to_encode = tokens[i:i + context_len]
-            next_token = tokens[i + context_len].item()
-            encoded_token = self.encode_token(to_encode, next_token)
-            encoded_tokens.append(encoded_token)
+
+
+        for b in range(blocks):
+            cur_tokens = [self.tokenizer.eos_token_id] + tokens[b*self.BLOCK_SIZE:(b + 1)*self.BLOCK_SIZE]
+ 
+            past = None
+            for i in range(len(cur_tokens)-1):
+                if i % 100 == 0:
+                    print("encoding, n = ", b*self.BLOCK_SIZE + i, "out of", len(tokens))
+                cur_token = cur_tokens[i]
+                next_token = cur_tokens[i + 1]
+                encoded_token, past = self.encode_token(cur_token, next_token, past)
+                encoded_tokens.append(encoded_token)
         return encoded_tokens
 
-    def decode_text(self, encoded, context_len=5):
-        set_seed(42)
-        tokens = [self.tokenizer.eos_token_id]*context_len 
-      
-        for i in range(len(encoded)):
-            
-            to_decode = torch.tensor(tokens[i:i + context_len])
-            decoded_token = self.decode_token(to_decode, encoded[i])
+    def decode_text(self, encoded):
 
-            tokens.append(decoded_token)
-        
-        tokens = tokens[context_len:]
+
+        tokens = []
+ 
+        blocks = 1 + len(tokens) // self.BLOCK_SIZE
+        for b in range(blocks):
+            cur_token = self.tokenizer.eos_token_id 
+            past = None
+            for i in range(len(encoded)):
+                if i % 100 == 0:
+                    print("decoding, n = ", b*self.BLOCK_SIZE + i, "out of", len(tokens))
+                cur_token, past = self.decode_token(cur_token, encoded[i], past)
+
+                tokens.append(cur_token)
+
         tokens = torch.tensor([tokens])
-        text = self.get_text(tokens)
+        text = self.tokens_to_text(tokens)
         return text
 
     def encode_and_zip(self, text):
         encoded = array("H", self.encode_text(text))
         return bz2.compress(encoded)
     
-    
+    # def unzip_and_decode(self, zipped):
+    #     unzipped = bz2.decompress(zipped)
+    #     encoded = array("H", unzipped)
+    #     return self.decode_text(encoded)
+        
+
+    # def zip_file(self, text_file, out_file):
+    #     with open(text_file) as f:
+    #         text = f.read()
+    #     zdata = self.encode_and_zip(text)
+    #     with open(out_file, 'wb') as f: 
+    #         f.write(zdata)
+
+    # def unzip_file(self, in_file, out_file):
+    #     with open(in_file, 'rb') as f: 
+    #         zdata = f.read()
+    #     text = self.unzip_and_decode(zdata)
+    #     with open(out_file)
+        
 
 def test():
     gpt_zip = GPTZip()
 
     with open("sometext.txt", encoding='utf-8') as f:
         text = f.read()
+    text = text[:1500]
     zip_encoded = gpt_zip.encode_and_zip(text)
     zip_unencoded = bz2.compress(text.encode('utf-8', 'ignore'))
 
@@ -106,5 +139,60 @@ def test():
     print(f"{len(zip_encoded)/len(zip_unencoded)=}")
 
 if __name__ == "__main__":
-    time = timeit.timeit(test, number=1)
-    print("time: ", time)
+    # time = timeit.timeit(test, number=1)
+    # print("time: ", time)
+    gpt_zip = GPTZip()
+    # text = "My dog can play fetch"
+    # tokens = gpt_zip.text_to_tokens(text)
+    # print("tokens", tokens)
+
+    # score, past = gpt_zip.encode_token(gpt_zip.tokenizer.eos_token_id, tokens[0])
+    # output_token, past = gpt_zip.decode_token(gpt_zip.tokenizer.eos_token_id, score)
+    # print("score", score)
+    # print("output token", output_token)
+
+
+    text = '''
+Arching under the night sky inky
+with black expansiveness, we point
+to the planets we know, we
+
+pin quick wishes on stars. From earth,
+we read the sky as if it is an unerring book
+of the universe, expert and evident.
+
+Still, there are mysteries below our sky:
+the whale song, the songbird singing
+its call in the bough of a wind-shaken tree.
+
+We are creatures of constant awe,
+curious at beauty, at leaf and blossom,
+at grief and pleasure, sun and shadow.
+
+And it is not darkness that unites us,
+not the cold distance of space, but
+the offering of water, each drop of rain,
+
+each rivulet, each pulse, each vein.
+O second moon, we, too, are made
+of water, of vast and beckoning seas.
+
+We, too, are made of wonders, of great
+and ordinary loves, of small invisible worlds,
+of a need to call out through the dark.
+    '''
+
+    orig_tokens = gpt_zip.text_to_tokens(text)
+
+    word_tokens = []
+    for token in orig_tokens:
+        word_tokens.append(gpt_zip.tokenizer.batch_decode([[token]]) )
+
+
+    tokens = gpt_zip.text_to_tokens(text)
+    encoded = gpt_zip.encode_text(text)
+
+    for i in range(len(word_tokens)):
+        print(f"{repr(word_tokens[i][0])}: {encoded[i]}")
+
+    print("median value of encoding: ", statistics.median(encoded))
