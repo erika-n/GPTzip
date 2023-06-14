@@ -4,16 +4,18 @@ from transformers import AutoTokenizer, GPT2LMHeadModel, set_seed
 import timeit
 import statistics
 from array import array
-import bz2
+import zlib
 import codecs
 import statistics
+import time
+import re
 
 class GPTZip:
 
     def __init__(self) -> None:
         self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
         self.model = GPT2LMHeadModel.from_pretrained("gpt2")
-        self.BLOCK_SIZE = 200
+        self.BLOCK_SIZE = 1024
 
 
     def text_to_tokens(self, text):
@@ -25,7 +27,6 @@ class GPTZip:
         tokens = tokens.reshape((1, -1))
         text = self.tokenizer.batch_decode(tokens)
         return text[0]
-
 
 
     def encode_token(self, cur_token, next_token, past_key_values=None):
@@ -61,48 +62,51 @@ class GPTZip:
         return decoded_token, outputs.past_key_values
 
     def encode_text(self, text):        
-
-        tokens = self.text_to_tokens(text).tolist()
-        blocks = 1 + len(tokens) // self.BLOCK_SIZE
-        encoded_tokens = []
-
-
-        for b in range(blocks):
-            cur_tokens = [self.tokenizer.eos_token_id] + tokens[b*self.BLOCK_SIZE:(b + 1)*self.BLOCK_SIZE]
- 
-            past = None
-            for i in range(len(cur_tokens)-1):
-                if i % 100 == 0:
-                    print("encoding, n = ", b*self.BLOCK_SIZE + i, "out of", len(tokens))
-                cur_token = cur_tokens[i]
-                next_token = cur_tokens[i + 1]
-                encoded_token, past = self.encode_token(cur_token, next_token, past)
-                encoded_tokens.append(encoded_token)
-        return encoded_tokens
+        with torch.no_grad():
+            tokens = self.text_to_tokens(text).tolist()
+            blocks = 1 + len(tokens) // self.BLOCK_SIZE
+            encoded_tokens = []
+            start_time = time.time()
+            print("Encoding")
+            for b in range(blocks):
+                cur_tokens = [self.tokenizer.eos_token_id] + tokens[b*self.BLOCK_SIZE:(b + 1)*self.BLOCK_SIZE]
+    
+                past = None
+                
+                for i in range(len(cur_tokens)-1):
+                    N = int(b*self.BLOCK_SIZE + i)
+                    if N % 100 == 0:
+                        print("N = ", N, "out of", len(tokens), " time = ", time.time() - start_time)
+                        start_time = time.time()
+                    cur_token = cur_tokens[i]
+                    next_token = cur_tokens[i + 1]
+                    encoded_token, past = self.encode_token(cur_token, next_token, past)
+                    encoded_tokens.append(encoded_token)
+            return encoded_tokens
 
     def decode_text(self, encoded):
 
+        with torch.no_grad():
+            tokens = []
+    
+            blocks = 1 + len(tokens) // self.BLOCK_SIZE
+            for b in range(blocks):
+                cur_token = self.tokenizer.eos_token_id 
+                past = None
+                for i in range(len(encoded)):
+                    if b*self.BLOCK_SIZE + i % 100 == 0:
+                        print("decoding, n = ", b*self.BLOCK_SIZE + i, "out of", len(tokens))
+                    cur_token, past = self.decode_token(cur_token, encoded[i], past)
 
-        tokens = []
- 
-        blocks = 1 + len(tokens) // self.BLOCK_SIZE
-        for b in range(blocks):
-            cur_token = self.tokenizer.eos_token_id 
-            past = None
-            for i in range(len(encoded)):
-                if i % 100 == 0:
-                    print("decoding, n = ", b*self.BLOCK_SIZE + i, "out of", len(tokens))
-                cur_token, past = self.decode_token(cur_token, encoded[i], past)
+                    tokens.append(cur_token)
 
-                tokens.append(cur_token)
-
-        tokens = torch.tensor([tokens])
-        text = self.tokens_to_text(tokens)
-        return text
+            tokens = torch.tensor([tokens])
+            text = self.tokens_to_text(tokens)
+            return text
 
     def encode_and_zip(self, text):
         encoded = array("H", self.encode_text(text))
-        return bz2.compress(encoded)
+        return zlib.compress(encoded, level=9)
     
     # def unzip_and_decode(self, zipped):
     #     unzipped = bz2.decompress(zipped)
@@ -129,29 +133,23 @@ def test():
 
     with open("sometext.txt", encoding='utf-8') as f:
         text = f.read()
-    text = text[:1500]
+    
+    # following the paper, make our test text just lowercase and space
+    text = text.lower()
+    text = re.sub('\W+', ' ', text)
+
+    text = text[:10000]
+    print(text[:100])
     zip_encoded = gpt_zip.encode_and_zip(text)
-    zip_unencoded = bz2.compress(text.encode('utf-8', 'ignore'))
+    zip_unencoded = zlib.compress(text.encode('utf-8', 'ignore'), level=9)
 
     print(f"{len(text)=}")
     print(f"{len(zip_encoded)=}")
     print(f"{len(zip_unencoded)=}")
     print(f"{len(zip_encoded)/len(zip_unencoded)=}")
 
-if __name__ == "__main__":
-    # time = timeit.timeit(test, number=1)
-    # print("time: ", time)
+def test_poem():
     gpt_zip = GPTZip()
-    # text = "My dog can play fetch"
-    # tokens = gpt_zip.text_to_tokens(text)
-    # print("tokens", tokens)
-
-    # score, past = gpt_zip.encode_token(gpt_zip.tokenizer.eos_token_id, tokens[0])
-    # output_token, past = gpt_zip.decode_token(gpt_zip.tokenizer.eos_token_id, score)
-    # print("score", score)
-    # print("output token", output_token)
-
-
     text = '''
 Arching under the night sky inky
 with black expansiveness, we point
@@ -196,3 +194,10 @@ of a need to call out through the dark.
         print(f"{repr(word_tokens[i][0])}: {encoded[i]}")
 
     print("median value of encoding: ", statistics.median(encoded))
+
+if __name__ == "__main__":
+    time = timeit.timeit(test, number=1)
+    print("time: ", time)
+    
+
+
