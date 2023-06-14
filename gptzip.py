@@ -138,7 +138,7 @@ def test():
     text = text.lower()
     text = re.sub('\W+', ' ', text)
 
-    text = text[:10000]
+    text = text[:40000]
     print(text[:100])
     zip_encoded = gpt_zip.encode_and_zip(text)
     zip_unencoded = zlib.compress(text.encode('utf-8', 'ignore'), level=9)
