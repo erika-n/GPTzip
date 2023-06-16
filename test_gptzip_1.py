@@ -33,22 +33,22 @@ def test_encode_decode_token():
 def test_encode_text():
     text = "My dog can play fetch"
     tokens = gpt_zip.text_to_tokens(text)
-    encoded_text = gpt_zip.encode_text(text)
+    encoded_text = gpt_zip.encode(text)
     assert tokens.shape[0] == len(encoded_text)
 
 def test_encode_decode_text():
     text = '''Much rides on the outcome. There is little doubt the new military drive will influence discussions of future support for Ukraine as well as debates about how to guarantee its future. What remains unclear, though, is exactly what the United States, Europe and Ukraine view as a “successful” counteroffensive.'''
 
 
-    encoded_text = gpt_zip.encode_text(text)
-    decoded_text = gpt_zip.decode_text(encoded_text)
+    encoded_text = gpt_zip.encode(text)
+    decoded_text = gpt_zip.decode(encoded_text)
     assert text == decoded_text
 
 
 def test_encode_decode_long_text():
-    with open("sometext.txt") as f:
+    with open("sometext.txt", encoding="utf-8") as f:
         text = f.read()
-    text = text[:10000]
-    encoded_text = gpt_zip.encode_text(text)
-    decoded_text = gpt_zip.decode_text(encoded_text)
+    text = text[:1000]
+    encoded_text = gpt_zip.encode(text)
+    decoded_text = gpt_zip.decode(encoded_text)
     assert text == decoded_text

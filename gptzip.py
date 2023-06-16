@@ -9,13 +9,15 @@ import codecs
 import statistics
 import time
 import re
+import matplotlib.pyplot as plt
 
 class GPTZip:
 
     def __init__(self) -> None:
         self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
         self.model = GPT2LMHeadModel.from_pretrained("gpt2")
-        self.BLOCK_SIZE = 1024
+        self.BLOCK_SIZE = 128
+        self.BATCH_SIZE = 10
 
 
     def text_to_tokens(self, text):
@@ -61,7 +63,26 @@ class GPTZip:
 
         return decoded_token, outputs.past_key_values
 
-    def encode_text(self, text):        
+    @torch.no_grad()
+    def encode_text_batch(self, text):
+        tokens = self.text_to_tokens(text) # shape [n_tokens]
+        print(tokens.shape)
+        n_blocks = 1 + tokens.shape[0] // self.BLOCK_SIZE
+        pad_len = self.BLOCK_SIZE - tokens.shape[0] % self.BLOCK_SIZE
+        padding = torch.tensor([self.tokenizer.eos_token_id]*pad_len)
+        tokens = torch.cat((tokens, padding))
+        print(tokens.shape)
+        tokens = tokens.view(-1, self.BLOCK_SIZE)
+        print(tokens.shape)
+
+        begin_eos = torch.tensor([self.tokenizer.eos_token_id]*tokens.shape[0]).reshape((1, -1))
+        tokens = torch.cat((begin_eos, tokens), 0)
+        print(tokens.shape)
+
+
+
+
+    def encode(self, text):        
         with torch.no_grad():
             tokens = self.text_to_tokens(text).tolist()
             blocks = 1 + len(tokens) // self.BLOCK_SIZE
@@ -84,19 +105,21 @@ class GPTZip:
                     encoded_tokens.append(encoded_token)
             return encoded_tokens
 
-    def decode_text(self, encoded):
+    def decode(self, encoded):
 
         with torch.no_grad():
             tokens = []
     
-            blocks = 1 + len(tokens) // self.BLOCK_SIZE
+            blocks = 1 + len(encoded) // self.BLOCK_SIZE
             for b in range(blocks):
+                print("b", b, "out of",blocks, "blocks")
                 cur_token = self.tokenizer.eos_token_id 
                 past = None
-                for i in range(len(encoded)):
+                cur_encoded = encoded[b*self.BLOCK_SIZE:(b + 1)*self.BLOCK_SIZE]
+                for i in range(len(cur_encoded)):
                     if b*self.BLOCK_SIZE + i % 100 == 0:
                         print("decoding, n = ", b*self.BLOCK_SIZE + i, "out of", len(tokens))
-                    cur_token, past = self.decode_token(cur_token, encoded[i], past)
+                    cur_token, past = self.decode_token(cur_token, cur_encoded[i], past)
 
                     tokens.append(cur_token)
 
@@ -105,7 +128,7 @@ class GPTZip:
             return text
 
     def encode_and_zip(self, text):
-        encoded = array("H", self.encode_text(text))
+        encoded = array("H", self.encode(text))
         return zlib.compress(encoded, level=9)
     
     # def unzip_and_decode(self, zipped):
@@ -136,7 +159,7 @@ def test():
     
     # following the paper, make our test text just lowercase and space
     text = text.lower()
-    text = re.sub('\W+', ' ', text)
+    text = re.sub(r'\W+', ' ', text)
 
     text = text[:40000]
     print(text[:100])
@@ -150,35 +173,16 @@ def test():
 
 def test_poem():
     gpt_zip = GPTZip()
-    text = '''
-Arching under the night sky inky
-with black expansiveness, we point
-to the planets we know, we
+#     text = '''Arching under the night sky inky
+#with black expansiveness, we point
+#to the planets we know, we'''
 
-pin quick wishes on stars. From earth,
-we read the sky as if it is an unerring book
-of the universe, expert and evident.
-
-Still, there are mysteries below our sky:
-the whale song, the songbird singing
-its call in the bough of a wind-shaken tree.
-
-We are creatures of constant awe,
-curious at beauty, at leaf and blossom,
-at grief and pleasure, sun and shadow.
-
-And it is not darkness that unites us,
-not the cold distance of space, but
-the offering of water, each drop of rain,
-
-each rivulet, each pulse, each vein.
-O second moon, we, too, are made
-of water, of vast and beckoning seas.
-
-We, too, are made of wonders, of great
-and ordinary loves, of small invisible worlds,
-of a need to call out through the dark.
-    '''
+    text = '''Like a movie scene
+In the sweetest dream
+I have pictured us together
+Now to feel your lips
+On my fingertips
+'''
 
     orig_tokens = gpt_zip.text_to_tokens(text)
 
@@ -195,9 +199,22 @@ of a need to call out through the dark.
 
     print("median value of encoding: ", statistics.median(encoded))
 
+    with open('song_chart.tsv', 'w') as f:
+        for i in range(len(encoded)):
+            f.write('' + word_tokens[i][0] + '\t' + str(encoded[i]) + "\n")
+
+
 if __name__ == "__main__":
-    time = timeit.timeit(test, number=1)
-    print("time: ", time)
-    
+    gpt_zip = GPTZip()
+    gpt_zip.BLOCK_SIZE = 10
+    with open("sometext.txt", encoding="utf-8") as f:
+        text = f.read()
+    text = text[:100]
+    encoded_text = gpt_zip.encode(text)
+    decoded_text = gpt_zip.decode(encoded_text)
+    print('----------')
+    print(text)
+    print('-----------')
+    print(decoded_text)
 
-
+    assert text == decoded_text
