@@ -16,8 +16,8 @@ class GPTZip:
     def __init__(self) -> None:
         self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
         self.model = GPT2LMHeadModel.from_pretrained("gpt2")
-        self.BLOCK_SIZE = 128
-        self.BATCH_SIZE = 10
+        self.CONTEXT_SIZE = 1024
+
 
 
     def text_to_tokens(self, text):
@@ -67,12 +67,12 @@ class GPTZip:
     def encode_text_batch(self, text):
         tokens = self.text_to_tokens(text) # shape [n_tokens]
         print(tokens.shape)
-        n_blocks = 1 + tokens.shape[0] // self.BLOCK_SIZE
-        pad_len = self.BLOCK_SIZE - tokens.shape[0] % self.BLOCK_SIZE
+        n_blocks = 1 + tokens.shape[0] // self.CONTEXT_SIZE
+        pad_len = self.CONTEXT_SIZE - tokens.shape[0] % self.CONTEXT_SIZE
         padding = torch.tensor([self.tokenizer.eos_token_id]*pad_len)
         tokens = torch.cat((tokens, padding))
         print(tokens.shape)
-        tokens = tokens.view(-1, self.BLOCK_SIZE)
+        tokens = tokens.view(-1, self.CONTEXT_SIZE)
         print(tokens.shape)
 
         begin_eos = torch.tensor([self.tokenizer.eos_token_id]*tokens.shape[0]).reshape((1, -1))
@@ -85,17 +85,17 @@ class GPTZip:
     def encode(self, text):        
         with torch.no_grad():
             tokens = self.text_to_tokens(text).tolist()
-            blocks = 1 + len(tokens) // self.BLOCK_SIZE
+            blocks = 1 + len(tokens) // self.CONTEXT_SIZE
             encoded_tokens = []
             start_time = time.time()
             print("Encoding")
             for b in range(blocks):
-                cur_tokens = [self.tokenizer.eos_token_id] + tokens[b*self.BLOCK_SIZE:(b + 1)*self.BLOCK_SIZE]
+                cur_tokens = [self.tokenizer.eos_token_id] + tokens[b*self.CONTEXT_SIZE:(b + 1)*self.CONTEXT_SIZE]
     
                 past = None
                 
                 for i in range(len(cur_tokens)-1):
-                    N = int(b*self.BLOCK_SIZE + i)
+                    N = int(b*self.CONTEXT_SIZE + i)
                     if N % 100 == 0:
                         print("N = ", N, "out of", len(tokens), " time = ", time.time() - start_time)
                         start_time = time.time()
@@ -110,15 +110,15 @@ class GPTZip:
         with torch.no_grad():
             tokens = []
     
-            blocks = 1 + len(encoded) // self.BLOCK_SIZE
+            blocks = 1 + len(encoded) // self.CONTEXT_SIZE
             for b in range(blocks):
                 print("b", b, "out of",blocks, "blocks")
                 cur_token = self.tokenizer.eos_token_id 
                 past = None
-                cur_encoded = encoded[b*self.BLOCK_SIZE:(b + 1)*self.BLOCK_SIZE]
+                cur_encoded = encoded[b*self.CONTEXT_SIZE:(b + 1)*self.CONTEXT_SIZE]
                 for i in range(len(cur_encoded)):
-                    if b*self.BLOCK_SIZE + i % 100 == 0:
-                        print("decoding, n = ", b*self.BLOCK_SIZE + i, "out of", len(tokens))
+                    if b*self.CONTEXT_SIZE + i % 100 == 0:
+                        print("decoding, n = ", b*self.CONTEXT_SIZE + i, "out of", len(tokens))
                     cur_token, past = self.decode_token(cur_token, cur_encoded[i], past)
 
                     tokens.append(cur_token)
@@ -192,7 +192,7 @@ On my fingertips
 
 
     tokens = gpt_zip.text_to_tokens(text)
-    encoded = gpt_zip.encode_text(text)
+    encoded = gpt_zip.encode(text)
 
     for i in range(len(word_tokens)):
         print(f"{repr(word_tokens[i][0])}: {encoded[i]}")
@@ -206,7 +206,7 @@ On my fingertips
 
 if __name__ == "__main__":
     gpt_zip = GPTZip()
-    gpt_zip.BLOCK_SIZE = 10
+    gpt_zip.CONTEXT_SIZE = 10
     with open("sometext.txt", encoding="utf-8") as f:
         text = f.read()
     text = text[:100]
