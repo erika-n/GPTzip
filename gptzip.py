@@ -115,25 +115,7 @@ class GPTZip:
         encoded = array("H", self.encode(text))
         return zlib.compress(encoded, level=9)
     
-    # def unzip_and_decode(self, zipped):
-    #     unzipped = bz2.decompress(zipped)
-    #     encoded = array("H", unzipped)
-    #     return self.decode_text(encoded)
-        
 
-    # def zip_file(self, text_file, out_file):
-    #     with open(text_file) as f:
-    #         text = f.read()
-    #     zdata = self.encode_and_zip(text)
-    #     with open(out_file, 'wb') as f: 
-    #         f.write(zdata)
-
-    # def unzip_file(self, in_file, out_file):
-    #     with open(in_file, 'rb') as f: 
-    #         zdata = f.read()
-    #     text = self.unzip_and_decode(zdata)
-    #     with open(out_file)
-        
 
 def test():
     gpt_zip = GPTZip()
