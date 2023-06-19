@@ -1,10 +1,10 @@
 
-import torch
-import timeit
-from transformers import AutoTokenizer, GPT2LMHeadModel
 import array
 import zlib
-import re
+
+import torch
+from transformers import AutoTokenizer, GPT2LMHeadModel
+
 
 class GPTZip:
     def __init__(self):
@@ -108,9 +108,7 @@ class GPTZip:
 
         tokens = tokens.to(self.device)
 
-        batches = tokens.shape[0]//self.BATCH_SIZE
-        if tokens.shape[0] % self.BATCH_SIZE != 0:
-            batches += 1
+        batches = tokens.shape[0]//self.BATCH_SIZE + (tokens.shape[0] % self.BATCH_SIZE > 0)
 
         # score each batch
         print("Encoding")
