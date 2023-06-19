@@ -1,7 +1,7 @@
 
 import torch
 import timeit
-from transformers import AutoTokenizer, GPT2LMHeadModel
+from transformers import AutoTokenizer, GPT2LMHeadModel, set_seed
 import array
 import zlib
 import re
@@ -18,6 +18,7 @@ class GPTZip:
             dev = "cpu" 
         self.device = torch.device(dev) 
         self.model.to(self.device) 
+        set_seed(42)
 
     def text_to_tokens(self, text):
         tokens = self.tokenizer(text, return_tensors="pt")
@@ -30,10 +31,17 @@ class GPTZip:
         return text[0]
 
     def pad(self, tokens, padding_val):
+        print(f"{tokens.get_device()=}")
         pad_len = self.CONTEXT_SIZE - tokens.shape[0] % self.CONTEXT_SIZE
         if pad_len != self.CONTEXT_SIZE:
             padding = torch.tensor([padding_val]*pad_len)
+            print(f"{padding.get_device()=}")
             tokens = torch.cat((tokens, padding))
+            print(f"{padding=}")
+        else:
+            pad_len = 0
+  
+        
         return tokens, pad_len
     
     @torch.no_grad()
@@ -83,10 +91,15 @@ class GPTZip:
 
         return decoded_tokens.int(), past
 
+
     def encode(self, text):
-        #TODO: use past
-        # get tokens and turn them into an n*CONTEXT_SIZE tensor
         tokens = self.text_to_tokens(text)
+        return self.encode_tokens(tokens)
+
+    def encode_tokens(self, tokens):
+
+        # get tokens and turn them into an n*CONTEXT_SIZE tensor
+
 
         tokens, pad_len = self.pad(tokens, self.tokenizer.eos_token_id)
         tokens = tokens.view(-1, self.CONTEXT_SIZE)
@@ -119,14 +132,21 @@ class GPTZip:
             output_scores[i*self.BATCH_SIZE:(i + 1)*self.BATCH_SIZE] = cur_output_scores
 
         output_scores = output_scores.flatten().int()
-
+        if pad_len > 0:
+            output_scores = output_scores[:-pad_len]
         return output_scores
     
-
     def decode(self, scores):
+        output_tokens = self.decode_tokens(scores)
+        text = self.tokenizer.batch_decode(output_tokens)
+        text = "".join(text)
+        text = text.replace("<|endoftext|>", "")
+        return text
+    
+    def decode_tokens(self, scores):
 
         # print(f"1:{scores=}")
-        # scores, pad_len = self.pad(scores, self.tokenizer.eos_token_id)
+        scores, pad_len = self.pad(scores, self.tokenizer.eos_token_id)
         # print(f"2: {scores=}")
         # print(f"{pad_len=}")
         scores = scores.view(-1, self.CONTEXT_SIZE) # all rows, CONTEXT_SIZE
@@ -159,14 +179,14 @@ class GPTZip:
 
             output_tokens[i*self.BATCH_SIZE:(i + 1)*self.BATCH_SIZE] = cur_output_tokens
         
-        #output_tokens[-1, -pad_len:] = self.tokenizer.eos_token_id
+        if pad_len != 0:
+            output_tokens[-1, -pad_len:] = self.tokenizer.eos_token_id
+
         output_tokens = output_tokens[:, 1:].int()
 
-        text = self.tokenizer.batch_decode(output_tokens)
-        text = "".join(text)
-        text = text.replace("<|endoftext|>", "")
 
-        return text
+
+        return output_tokens
 
 
 

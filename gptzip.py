@@ -17,6 +17,7 @@ class GPTZip:
         self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
         self.model = GPT2LMHeadModel.from_pretrained("gpt2")
         self.CONTEXT_SIZE = 1024
+        set_seed(42)
 
 
 
@@ -62,23 +63,6 @@ class GPTZip:
         decoded_token = sorted_tokens[score].item()
 
         return decoded_token, outputs.past_key_values
-
-    @torch.no_grad()
-    def encode_text_batch(self, text):
-        tokens = self.text_to_tokens(text) # shape [n_tokens]
-        print(tokens.shape)
-        n_blocks = 1 + tokens.shape[0] // self.CONTEXT_SIZE
-        pad_len = self.CONTEXT_SIZE - tokens.shape[0] % self.CONTEXT_SIZE
-        padding = torch.tensor([self.tokenizer.eos_token_id]*pad_len)
-        tokens = torch.cat((tokens, padding))
-        print(tokens.shape)
-        tokens = tokens.view(-1, self.CONTEXT_SIZE)
-        print(tokens.shape)
-
-        begin_eos = torch.tensor([self.tokenizer.eos_token_id]*tokens.shape[0]).reshape((1, -1))
-        tokens = torch.cat((begin_eos, tokens), 0)
-        print(tokens.shape)
-
 
 
 
