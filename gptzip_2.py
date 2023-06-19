@@ -8,8 +8,8 @@ import re
 
 class GPTZip:
     def __init__(self):
-        self.CONTEXT_SIZE = 128
-        self.BATCH_SIZE = 5
+        self.CONTEXT_SIZE = 1024
+        self.BATCH_SIZE = 25
         self.model = GPT2LMHeadModel.from_pretrained("gpt2")
         self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
         if torch.cuda.is_available():  
