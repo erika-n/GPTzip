@@ -12,11 +12,11 @@ Use [these instructions](https://pytorch.org/get-started/locally/) to install py
 
 To zip:
 
-`python gpt_zip -z textfile.txt`
+`python gpt_zip.py -z textfile.txt`
 
 To unzip:
 
-`python gpt_zip -u zipfile.gpz`
+`python gpt_zip.py -u zipfile.gpz`
 
 ## Citation 
 ```
