@@ -1,24 +1,22 @@
 
 import torch
-from transformers import AutoTokenizer, GPT2LMHeadModel, set_seed
-import timeit
-import statistics
-from array import array
+from transformers import AutoTokenizer, GPT2LMHeadModel
+import array
 import zlib
-import codecs
-import statistics
-import time
-import re
-import matplotlib.pyplot as plt
+import argparse
 
 class GPTZip:
-
-    def __init__(self) -> None:
-        self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
-        self.model = GPT2LMHeadModel.from_pretrained("gpt2")
+    def __init__(self):
         self.CONTEXT_SIZE = 1024
-        set_seed(42)
-
+        self.BATCH_SIZE = 10
+        self.model = GPT2LMHeadModel.from_pretrained("gpt2")
+        self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        if torch.cuda.is_available():  
+            dev = "cuda:0" 
+        else:  
+            dev = "cpu" 
+        self.device = torch.device(dev) 
+        self.model.to(self.device) 
 
 
     def text_to_tokens(self, text):
@@ -31,156 +29,233 @@ class GPTZip:
         text = self.tokenizer.batch_decode(tokens)
         return text[0]
 
+    def pad(self, tokens, padding_val):
+        pad_len = self.CONTEXT_SIZE - tokens.shape[0] % self.CONTEXT_SIZE
+        if pad_len != self.CONTEXT_SIZE:
+            padding = torch.tensor([padding_val]*pad_len)
 
-    def encode_token(self, cur_token, next_token, past_key_values=None):
+            tokens = torch.cat((tokens, padding))
 
-
-
-        my_inputs = {}
-        my_inputs['input_ids'] = torch.tensor([[cur_token]])
-        my_inputs['attention_mask'] = torch.ones(my_inputs['input_ids'].shape)
-
-
-        outputs = self.model(**my_inputs, labels=my_inputs["input_ids"], past_key_values=past_key_values)
-        logits = outputs.logits
-
-        next_token_logits = logits[0, -1:, :].squeeze()
-        logits, sorted_tokens = torch.sort(next_token_logits, descending=True)
-
-        score = (sorted_tokens==next_token).nonzero().item()
-        return score, outputs.past_key_values
-
-    def decode_token(self, cur_token, score, past_key_values=None):
-        my_inputs = {}
-        my_inputs['input_ids'] = torch.tensor([[cur_token]])
-        my_inputs['attention_mask'] = torch.ones(my_inputs['input_ids'].shape)
-   
-        outputs = self.model(**my_inputs, labels=my_inputs["input_ids"], past_key_values=past_key_values)
-        logits = outputs.logits
-
-        next_token_logits = logits[0, -1:, :].squeeze()
-        logits, sorted_tokens = torch.sort(next_token_logits, descending=True)
-        decoded_token = sorted_tokens[score].item()
-
-        return decoded_token, outputs.past_key_values
-
-
-
-    def encode(self, text):        
-        with torch.no_grad():
-            tokens = self.text_to_tokens(text).tolist()
-            blocks = 1 + len(tokens) // self.CONTEXT_SIZE
-            encoded_tokens = []
-            start_time = time.time()
-            print("Encoding")
-            for b in range(blocks):
-                cur_tokens = [self.tokenizer.eos_token_id] + tokens[b*self.CONTEXT_SIZE:(b + 1)*self.CONTEXT_SIZE]
+        else:
+            pad_len = 0
+  
+        
+        return tokens, pad_len
     
-                past = None
-                
-                for i in range(len(cur_tokens)-1):
-                    N = int(b*self.CONTEXT_SIZE + i)
-                    if N % 100 == 0:
-                        print("N = ", N, "out of", len(tokens), " time = ", time.time() - start_time)
-                        start_time = time.time()
-                    cur_token = cur_tokens[i]
-                    next_token = cur_tokens[i + 1]
-                    encoded_token, past = self.encode_token(cur_token, next_token, past)
-                    encoded_tokens.append(encoded_token)
-            return encoded_tokens
+    @torch.no_grad()
+    def get_logits(self, tokens, token_index, past=None):
+        my_inputs = {}
+        my_inputs['input_ids'] = tokens[:, token_index].reshape(-1, 1)
 
-    def decode(self, encoded):
-
-        with torch.no_grad():
-            tokens = []
+        output = self.model(**my_inputs, past_key_values=past)
+        logits = output.logits 
+        if len(logits.shape) > 2:
+            logits = logits.reshape((logits.shape[0], -1))
+        return logits, output.past_key_values  
     
-            blocks = 1 + len(encoded) // self.CONTEXT_SIZE
-            for b in range(blocks):
-                print("b", b, "out of",blocks, "blocks")
-                cur_token = self.tokenizer.eos_token_id 
-                past = None
-                cur_encoded = encoded[b*self.CONTEXT_SIZE:(b + 1)*self.CONTEXT_SIZE]
-                for i in range(len(cur_encoded)):
-                    if b*self.CONTEXT_SIZE + i % 100 == 0:
-                        print("decoding, n = ", b*self.CONTEXT_SIZE + i, "out of", len(tokens))
-                    cur_token, past = self.decode_token(cur_token, cur_encoded[i], past)
 
-                    tokens.append(cur_token)
+    def encode_one_batch(self, tokens, token_index, past=None):
 
-            tokens = torch.tensor([tokens])
-            text = self.tokens_to_text(tokens)
-            return text
+        assert len(tokens.shape) == 2
+ 
+        logits, past = self.get_logits(tokens, token_index, past)
+        assert len(logits.shape) == 2
+        logits, sorted_tokens = torch.sort(logits, descending=True)
+        
+        assert len(sorted_tokens.shape) == 2
+
+
+        next_tokens = tokens[:, token_index + 1]
+        next_tokens_expanded = next_tokens.view(-1, 1).expand_as(sorted_tokens)
+        next_tokens_expanded = next_tokens_expanded
+
+        # Find score as index of next tokens
+        scores = (sorted_tokens==next_tokens_expanded).nonzero(as_tuple=True)
+
+        scores = scores[1] # remove index column
+
+        return scores, past
+
+    def decode_one_batch(self, input_tokens, scores, score_index, past=None):
+        assert len(scores.shape) == 2
+        logits, past = self.get_logits(input_tokens, score_index, past)
+
+        logits, sorted_tokens = torch.sort(logits, descending=True)
+        assert len(sorted_tokens.shape) == 2
+        # the scores give the indexes of the decoded tokens
+        indexes = scores[:, score_index].flatten()
+        decoded_tokens = sorted_tokens[torch.arange(indexes.shape[0]), indexes]
+
+        return decoded_tokens.int(), past
+
+
+    def encode(self, text):
+        tokens = self.text_to_tokens(text)
+        return self.encode_tokens(tokens)
+
+    def encode_tokens(self, tokens):
+
+        tokens, pad_len = self.pad(tokens, self.tokenizer.eos_token_id)
+        tokens = tokens.view(-1, self.CONTEXT_SIZE)
+
+        output_scores = torch.zeros(tokens.shape)
+
+
+        # Add eos to the start of each block (to give it somewhere to start)
+        eos = torch.tensor([self.tokenizer.eos_token_id]*tokens.shape[0]).unsqueeze(1)
+        tokens = torch.cat((eos, tokens), 1)
+
+        tokens = tokens.to(self.device)
+
+        batches = tokens.shape[0]//self.BATCH_SIZE
+        if tokens.shape[0] % self.BATCH_SIZE != 0:
+            batches += 1
+
+        # score each batch
+        print("Encoding")
+        for i in range(batches):
+            cur_tokens = tokens[i*self.BATCH_SIZE:(i + 1)*self.BATCH_SIZE]
+            cur_output_scores = torch.zeros((cur_tokens.shape[0], cur_tokens.shape[1]-1))
+            past = None
+            print(i, "out of", batches)
+            
+            for j in range(cur_tokens.shape[1]-1):
+
+                cur_output_scores[:, j], past = self.encode_one_batch(cur_tokens, j, past)
+            output_scores[i*self.BATCH_SIZE:(i + 1)*self.BATCH_SIZE] = cur_output_scores
+
+        output_scores = output_scores.flatten().int()
+        if pad_len > 0:
+            output_scores = output_scores[:-pad_len]
+        return output_scores
+    
+    def decode(self, scores):
+        output_tokens = self.decode_tokens(scores)
+        text = self.tokenizer.batch_decode(output_tokens)
+        text = "".join(text)
+        #text = text.replace("<|endoftext|>", "")
+        return text
+    
+    def decode_tokens(self, scores):
+
+        scores, pad_len = self.pad(scores, self.tokenizer.eos_token_id)
+
+        scores = scores.view(-1, self.CONTEXT_SIZE) # all rows, CONTEXT_SIZE
+
+        output_tokens = torch.zeros(scores.shape, dtype=int)
+
+
+        # Add eos to the start of each block (to give it somewhere to start)
+        eos = torch.tensor([self.tokenizer.eos_token_id]*output_tokens.shape[0]).unsqueeze(1)
+        output_tokens = torch.cat((eos, output_tokens), 1) # all rows, CONTEXT_SIZE + 1
+
+        output_tokens = output_tokens.to(self.device)
+
+        batches = scores.shape[0]//self.BATCH_SIZE
+        if scores.shape[0] % self.BATCH_SIZE != 0:
+            batches += 1
+
+        # score each batch
+        print("Decoding")
+        for i in range(batches):
+            print(i, "out of", batches)
+            cur_scores = scores[i*self.BATCH_SIZE:(i + 1)*self.BATCH_SIZE] # BATCH_SIZE, CONTEXT_SIZE
+
+            cur_output_tokens = output_tokens[i*self.BATCH_SIZE:(i + 1)*self.BATCH_SIZE] # BATCH_SIZE, CONTEXT_SIZE
+            cur_output_tokens = cur_output_tokens.to(self.device)
+            past = None
+            for j in range(scores.shape[1]):
+ 
+                cur_output_tokens[:, j+1], past = self.decode_one_batch(cur_output_tokens, cur_scores, j, past) # BATCH_SIZE
+
+            output_tokens[i*self.BATCH_SIZE:(i + 1)*self.BATCH_SIZE] = cur_output_tokens
+        
+  
+
+        output_tokens = output_tokens[:, 1:].int()
+        output_tokens = output_tokens.flatten()
+
+        if pad_len != 0:
+            output_tokens = output_tokens[:-pad_len]
+
+        return output_tokens
+
+
 
     def encode_and_zip(self, text):
-        encoded = array("H", self.encode(text))
+        encoded = self.encode(text)
+        encoded = array.array("H", encoded)
         return zlib.compress(encoded, level=9)
     
 
-
-def test():
-    gpt_zip = GPTZip()
-
-    with open("sometext.txt", encoding='utf-8') as f:
-        text = f.read()
+    def unzip_and_decode(self, zipped):
+        unzipped = zlib.decompress(zipped)
+        unzipped = array.array("H", unzipped)
+        decoded = self.decode(torch.tensor(unzipped))
+        return decoded
     
-    # following the paper, make our test text just lowercase and space
-    text = text.lower()
-    text = re.sub(r'\W+', ' ', text)
+    def zip_file(self, text_file, zip_file):
+        with open(text_file, encoding="utf-8") as f:
+            text = f.read()
 
-    text = text[:40000]
-    print(text[:100])
-    zip_encoded = gpt_zip.encode_and_zip(text)
-    zip_unencoded = zlib.compress(text.encode('utf-8', 'ignore'), level=9)
+        zipped = self.encode_and_zip(text)
 
-    print(f"{len(text)=}")
-    print(f"{len(zip_encoded)=}")
-    print(f"{len(zip_unencoded)=}")
-    print(f"{len(zip_encoded)/len(zip_unencoded)=}")
+        with open(zip_file, "wb") as f:
+            f.write(zipped)
 
-def test_poem():
-    gpt_zip = GPTZip()
-#     text = '''Arching under the night sky inky
-#with black expansiveness, we point
-#to the planets we know, we'''
+    def unzip_file(self, zip_file, text_file):
+        with open(zip_file, "rb") as f:
+            zipped = f.read()
+        text = self.unzip_and_decode(zipped)
 
-    text = '''Like a movie scene
-In the sweetest dream
-I have pictured us together
-Now to feel your lips
-On my fingertips
-'''
+        with open(text_file, "w", encoding="utf-8") as f:
+            f.write(text)
 
-    orig_tokens = gpt_zip.text_to_tokens(text)
-
-    word_tokens = []
-    for token in orig_tokens:
-        word_tokens.append(gpt_zip.tokenizer.batch_decode([[token]]) )
-
-
-    tokens = gpt_zip.text_to_tokens(text)
-    encoded = gpt_zip.encode(text)
-
-    for i in range(len(word_tokens)):
-        print(f"{repr(word_tokens[i][0])}: {encoded[i]}")
-
-    print("median value of encoding: ", statistics.median(encoded))
-
-    with open('song_chart.tsv', 'w') as f:
-        for i in range(len(encoded)):
-            f.write('' + word_tokens[i][0] + '\t' + str(encoded[i]) + "\n")
+        
 
 
 if __name__ == "__main__":
-    gpt_zip = GPTZip()
-    gpt_zip.CONTEXT_SIZE = 10
-    with open("sometext.txt", encoding="utf-8") as f:
-        text = f.read()
-    text = text[:100]
-    encoded_text = gpt_zip.encode(text)
-    decoded_text = gpt_zip.decode(encoded_text)
-    print('----------')
-    print(text)
-    print('-----------')
-    print(decoded_text)
 
-    assert text == decoded_text
+
+
+    parser = argparse.ArgumentParser(
+                        prog='GPTZip',
+                        description='Zips files using LLMzip algorithm with GPT-2')
+    parser.add_argument('-z', '--zip')
+    parser.add_argument('-u', '--unzip')
+    parser.add_argument('-o', '--output_file')
+    args = parser.parse_args()   
+
+
+
+    if args.zip is not None:
+        if args.zip[-4:] != ".txt":
+            print("This program can only zip text files")
+            exit()
+        print("Loading model...")
+        gpt_zip = GPTZip()
+        zip_file = args.zip[:-4] + ".gpz"
+        if args.output_file is not None:
+            zip_file = args.output_file
+            if zip_file[:-4] != ".gpz":
+                zip_file += ".gpz"
+        gpt_zip.zip_file(args.zip, zip_file)
+        print("Saved to: ", zip_file)
+    elif args.unzip is not None:
+        if args.unzip[-4:] != ".gpz":
+            print("This program can only unzip GPTZip files (.gpz)")
+        print("Loading model...")
+        gpt_zip = GPTZip()
+        text_file = args.unzip[:-4] + ".txt"
+        if args.output_file is not None:
+            text_file = args.output_file
+            if text_file[-4:] != ".txt":
+                text_file += ".txt"
+        gpt_zip.unzip_file(args.unzip, text_file)
+        print("Saved to: ", text_file)
+    else:
+        print("Usage: GPT zip (-z) text files, or unzip (-u) GPT zip files (.gpz)")
+
+    
+        
+         

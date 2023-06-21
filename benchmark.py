@@ -12,6 +12,7 @@ def benchmark(gpt_zip):
     # following the paper, make our test text just lowercase and space
     text = text.lower()
     text = re.sub(r'\W+', ' ', text)
+    text = text[:10000]
 
     gpt_zip.CONTEXT_SIZE = 1024
     gpt_zip.BATCH_SIZE = 25
