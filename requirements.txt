@@ -1,4 +1,2 @@
 transformers
-xformers
-pytorch
-nltk.download('punkt')
+torch

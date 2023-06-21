@@ -1,4 +1,4 @@
-from gptzip_2 import GPTZip
+from gptzip import GPTZip
 import torch
 import re
 
@@ -144,7 +144,7 @@ def test_encode_decode_longer():
     gpt_zip.CONTEXT_SIZE = 128
     gpt_zip.BATCH_SIZE = 3
 
-    with open("sometext.txt", encoding='utf-8') as f:
+    with open("text/sometext.txt", encoding='utf-8') as f:
         text = f.read()
 
     # following the paper, make our test text just lowercase and space
@@ -158,4 +158,27 @@ def test_encode_decode_longer():
 
     text_out = gpt_zip.decode(encoded)
 
+    print(f"{text=}")
+    print(f"{text_out=}")
+
     assert text == text_out
+
+def test_zip():
+    with open("text/somesmallertext.txt", encoding="utf-8") as f:
+        text = f.read()
+
+    zipped = gpt_zip.encode_and_zip(text)
+
+    unzipped = gpt_zip.unzip_and_decode(zipped)
+    print(unzipped)
+    assert text == unzipped
+
+def test_file_zip():
+    
+    gpt_zip.zip_file("text/somesmallertext.txt", "text/zipped.zip")
+    gpt_zip.unzip_file("text/zipped.zip", "text/unzipped.txt")
+    with open("text/somesmallertext.txt", encoding="utf-8") as f:
+        text = f.read()
+    with open("text/unzipped.txt", encoding="utf-8") as f:
+        unzipped_text = f.read()
+    assert text == unzipped_text
