@@ -12,8 +12,22 @@ Use [these instructions](https://pytorch.org/get-started/locally/) to install py
 
 To zip:
 
-python gpt_zip -z textfile.txt
+`python gpt_zip -z textfile.txt`
 
 To unzip:
 
-python gpt_zip -u zipfile.gpz
+`python gpt_zip -u zipfile.gpz`
+
+## Citation 
+`@misc{ch2023llmzip,
+    title={LLMZip: Lossless Text Compression using Large Language Models},
+    author={Chandra Shekhara Kaushik Valmeekam and Krishna Narayanan and Dileep Kalathil and Jean-Francois Chamberland and Srinivas Shakkottai},
+    year={2023},
+    eprint={2306.04050},
+    archivePrefix={arXiv},
+    primaryClass={cs.IT}
+}`
+
+## Performance
+
+This program performs at 1.75 bits/character on the book referenced in the paper, prepared as in the paper to be only lowercase letters and space. This is 62% the file size of the text compressed with zlib alone. 

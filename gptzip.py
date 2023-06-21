@@ -20,6 +20,7 @@ class GPTZip:
 
 
     def text_to_tokens(self, text):
+        # ignore the warning that this gives about too many tokens
         tokens = self.tokenizer(text, return_tensors="pt")
         tokens = tokens["input_ids"].squeeze()
         return tokens
