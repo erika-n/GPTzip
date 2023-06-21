@@ -19,14 +19,16 @@ To unzip:
 `python gpt_zip -u zipfile.gpz`
 
 ## Citation 
-```@misc{ch2023llmzip,
+```
+@misc{ch2023llmzip,
     title={LLMZip: Lossless Text Compression using Large Language Models},
     author={Chandra Shekhara Kaushik Valmeekam and Krishna Narayanan and Dileep Kalathil and Jean-Francois Chamberland and Srinivas Shakkottai},
     year={2023},
     eprint={2306.04050},
     archivePrefix={arXiv},
     primaryClass={cs.IT}
-}```
+}
+```
 
 ## Performance
 
