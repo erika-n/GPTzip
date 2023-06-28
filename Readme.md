@@ -2,7 +2,7 @@
 
 An implementation of [LLMzip](https://arxiv.org/abs/2306.04050) using GPT-2. This is an algorithm for super-compressed text data using an LLM to encode the data. 
 
-You might also want to look at [NNCP](https://bellard.org/nncp/)
+You might also want to look at [NNCP](https://bellard.org/nncp/), a prior LLM based compressor.
 
 ## Requirements
 
